@@ -381,21 +381,14 @@ export default function ProductDiscoveryPage() {
       // Feed-based browsing pages via a search_id cursor; store it for the *next* page and use
       // its presence (plus getting a non-empty page) to decide whether "Next" should be enabled.
       // Keyword text-search still pages via page numbers, so fall back to totalPages there.
-      let computedHasMore: boolean;
-      if (isFeedBrowse) {
-        if (json.searchId) {
-          pageCursorsRef.current[pageNo + 1] = json.searchId;
-        } else {
-          delete pageCursorsRef.current[pageNo + 1];
-        }
-        computedHasMore = !!json.searchId && filtered.length > 0;
-      } else {
-        const totalCountForPages = parseInt(String(json.totalCount ?? '0'), 10) || parsed.length;
-        const totalPagesFromApi = json.totalPages ? parseInt(String(json.totalPages), 10) : null;
-        const computedTotalPages = totalPagesFromApi ?? Math.ceil(totalCountForPages / ps);
-        computedHasMore = pageNo < computedTotalPages;
-      }
-      const totalCount = parseInt(String(json.totalCount ?? '0'), 10) || parsed.length;
+      const apiTotalCount = parseInt(String(json.totalCount ?? '0'), 10);
+      const computedHasMore = apiTotalCount > 0 
+        ? pageNo < Math.ceil(apiTotalCount / ps)
+        : parsed.length >= ps;
+      
+      const fakeTotal = pageNo * ps + (computedHasMore ? 1 : 0);
+      const totalCount = apiTotalCount > 0 ? apiTotalCount : fakeTotal;
+      
       setHasMore(computedHasMore);
       setSearchMeta({ totalCount, pageIndex: pageNo, pageSize: ps });
     } catch (e: unknown) {
