@@ -6,9 +6,9 @@ import { categoryLabel } from '@/lib/aliexpress-categories';
 // Map UI sort values to AliExpress DS text search sortBy values
 const TEXT_SORT_MAP: Record<string, string> = {
   'orders,desc': 'orders,desc',
-  'price,asc': 'price,asc',
-  'price,desc': 'price,desc',
-  'score,desc': 'score,desc',
+  'price,asc': 'min_price,asc',
+  'price,desc': 'min_price,desc',
+  'score,desc': 'comments,desc',
   'default': '',
 };
 
@@ -147,10 +147,17 @@ export async function POST(request: NextRequest) {
         local: 'en_US',
         countryCode: 'US',
         currency: 'USD',
-        pageSize: '50', // Fetch large pages for local filtering
+        pageSize: '50',
         pageIndex: String(p),
-        keyWord: searchKeyword,
+        keyword: searchKeyword,
       };
+      
+      const searchExtendArr = [];
+      if (minPrice !== undefined && minPrice !== '') searchExtendArr.push({ name: 'min', value: String(minPrice) });
+      if (maxPrice !== undefined && maxPrice !== '') searchExtendArr.push({ name: 'max', value: String(maxPrice) });
+      if (searchExtendArr.length > 0) {
+        extraParams.searchExtend = JSON.stringify(searchExtendArr);
+      }
       
       if (hasCategoryId) extraParams.categoryId = String(categoryId);
       

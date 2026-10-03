@@ -306,16 +306,19 @@ export interface FreightCalculateParams {
 }
 
 export async function freightCalculate(creds: AliDsCredentials, p: FreightCalculateParams) {
-  const extra: Record<string, string> = {
+  const paramObj: Record<string, string> = {
     product_id: p.product_id,
     product_num: String(p.product_num),
     country_code: p.country_code,
     send_goods_country_code: p.send_goods_country_code ?? 'CN',
     price_currency: p.price_currency ?? 'USD',
   };
-  if (p.province_code) extra.province_code = p.province_code;
-  if (p.city_code) extra.city_code = p.city_code;
-  return callAliDsApi('aliexpress.logistics.buyer.freight.calculate', creds, extra);
+  if (p.province_code) paramObj.province_code = p.province_code;
+  if (p.city_code) paramObj.city_code = p.city_code;
+  
+  return callAliDsApi('aliexpress.logistics.buyer.freight.calculate', creds, {
+    param_aeop_freight_calculate_for_buyer_d_t_o: JSON.stringify(paramObj)
+  });
 }
 
 // ─── 9. Order Create ─────────────────────────────────────────────────────────
