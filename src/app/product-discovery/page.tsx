@@ -361,7 +361,7 @@ export default function ProductDiscoveryPage() {
   const [maxPrice, setMaxPrice] = useState('');
   const [minRating, setMinRating] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('');
-  const [sortBy, setSortBy] = useState('orders,desc');
+  const [sortBy, setSortBy] = useState('default');
   const [pageSize, setPageSize] = useState(20);
   const [showFilters, setShowFilters] = useState(false);
   const [loading, setLoading] = useState(false);

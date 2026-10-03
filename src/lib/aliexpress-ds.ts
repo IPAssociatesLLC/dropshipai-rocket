@@ -283,11 +283,13 @@ export interface DsFreightQueryParams {
 
 export async function dsFreightQuery(creds: AliDsCredentials, p: DsFreightQueryParams) {
   return callAliDsApi('aliexpress.ds.freight.query', creds, {
-    product_id: p.product_id,
-    product_num: String(p.product_num),
-    ship_to_country: p.ship_to_country,
-    send_goods_country_code: p.send_goods_country_code ?? 'CN',
-    price_currency: p.price_currency ?? 'USD',
+    queryDeliveryReq: JSON.stringify({
+      product_id: p.product_id,
+      product_num: String(p.product_num),
+      ship_to_country: p.ship_to_country,
+      send_goods_country_code: p.send_goods_country_code ?? 'CN',
+      price_currency: p.price_currency ?? 'USD',
+    })
   });
 }
 

@@ -227,18 +227,6 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // Sort locally in case text.search ignored the sort (it often does)
-    const sortByKey = sortBy ?? 'orders,desc';
-    if (sortByKey === 'orders,desc') {
-      allNormalized.sort((a, b) => parseInt(b.orders) - parseInt(a.orders));
-    } else if (sortByKey === 'price,asc') {
-      allNormalized.sort((a, b) => parseFloat(a.targetSalePrice) - parseFloat(b.targetSalePrice));
-    } else if (sortByKey === 'price,desc') {
-      allNormalized.sort((a, b) => parseFloat(b.targetSalePrice) - parseFloat(a.targetSalePrice));
-    } else if (sortByKey === 'score,desc') {
-      allNormalized.sort((a, b) => parseFloat(b.evaluateRate) - parseFloat(a.evaluateRate));
-    }
-
     const finalProducts = allNormalized.slice(0, pageSize);
 
     // Fetch shipping costs for the final products before returning
