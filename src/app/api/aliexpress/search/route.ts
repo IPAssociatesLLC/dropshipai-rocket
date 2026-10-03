@@ -244,12 +244,12 @@ export async function POST(request: NextRequest) {
     // Fetch shipping costs for the final products before returning
     const finalProductsWithFreight = await runWithConcurrencyLimit(finalProducts, 5, async (prod: any) => {
       try {
-        const fRes = await freightCalculate(searchCreds, { product_id: prod.itemId, product_num: 1, country_code: 'US', price_currency: 'USD' }).catch(() => null);
+        const fRes = await callAliDsApi('aliexpress.ds.freight.query', searchCreds, { product_id: prod.itemId, product_num: '1', send_goods_country_code: 'CN', ship_to_country: 'US', price_currency: 'USD' }).catch(() => null);
         let shippingFee = '0';
         if (fRes && fRes.success) {
-          const opts = (fRes.data as any)?.delivery_options;
+          const opts = (fRes.data as any)?.aeop_freight_calculate_result_for_buyer_dtolist;
           if (opts && opts.length > 0) {
-            shippingFee = String(opts[0].shipping_fee_cent || '0');
+            shippingFee = String(opts[0].freight?.amount || opts[0].freight?.cent || '0');
           }
         }
         return { ...prod, freightAmount: shippingFee };
