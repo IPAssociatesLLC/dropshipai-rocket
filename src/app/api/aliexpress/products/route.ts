@@ -108,13 +108,13 @@ export async function POST(req: NextRequest) {
       }
 
       case 'feed_items': {
-        const { feedName, pageNo, pageSize } = params as {
+        const { feedName, searchId, pageSize } = params as {
           feedName: string;
-          pageNo?: number;
+          searchId?: string;
           pageSize?: number;
         };
         if (!feedName) return NextResponse.json({ success: false, message: 'feedName is required.' }, { status: 400 });
-        result = await dsFeedItemIdsGet(dsCreds, feedName, { page_no: pageNo, page_size: pageSize });
+        result = await dsFeedItemIdsGet(dsCreds, feedName, { search_id: searchId, page_size: pageSize });
         break;
       }
 

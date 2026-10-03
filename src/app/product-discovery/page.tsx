@@ -56,6 +56,94 @@ interface ParsedProduct {
   skuId: string;
 }
 
+
+interface PricingRule {
+  id: string;
+  name: string;
+  source: string;
+  ruleType: 'percentage' | 'flat' | 'multiplier';
+  markupValue: number;
+  minPrice: number | null;
+  maxPrice: number | null;
+  flatMarkup: number;
+  lowPriceThreshold: number | null;
+  lowPriceFlatAdd: number | null;
+  roundTo99: boolean;
+  priority: number;
+  isActive: boolean;
+  marketplaceFeeType: 'percent' | 'dollar';
+  marketplaceFee: number;
+  paypalFeeType: 'percent' | 'dollar';
+  paypalFee: number;
+  shippingFeeType: 'free' | 'dollar';
+  shippingFee: number;
+  minProfitType: 'percent' | 'dollar';
+  minProfit: number;
+  maxProfitType: 'percent' | 'dollar' | 'none';
+  maxProfit: number | null;
+}
+
+function mapDbRule(row: Record<string, unknown>): PricingRule {
+  return {
+    id: row.id as string,
+    name: row.name as string,
+    source: row.source as string,
+    ruleType: (row.rule_type as PricingRule['ruleType']) || 'percentage',
+    markupValue: (row.markup_value as number) || 30,
+    minPrice: row.min_price as number | null,
+    maxPrice: row.max_price as number | null,
+    flatMarkup: (row.flat_markup as number) || 0,
+    lowPriceThreshold: row.low_price_threshold as number | null,
+    lowPriceFlatAdd: row.low_price_flat_add as number | null,
+    roundTo99: (row.round_to_99 as boolean) !== false,
+    priority: (row.priority as number) || 1,
+    isActive: (row.is_active as boolean) !== false,
+    marketplaceFeeType: (row.marketplace_fee_type as 'percent' | 'dollar') || 'percent',
+    marketplaceFee: (row.marketplace_fee as number) || 3.5,
+    paypalFeeType: (row.paypal_fee_type as 'percent' | 'dollar') || 'percent',
+    paypalFee: (row.paypal_fee as number) || 2.9,
+    shippingFeeType: (row.shipping_fee_type as 'free' | 'dollar') || 'free',
+    shippingFee: (row.shipping_fee as number) || 0,
+    minProfitType: (row.min_profit_type as 'percent' | 'dollar') || 'percent',
+    minProfit: (row.min_profit as number) || 15,
+    maxProfitType: (row.max_profit_type as 'percent' | 'dollar' | 'none') || 'none',
+    maxProfit: row.max_profit as number | null,
+  };
+}
+
+function calculateSuggestedPrice(costPrice: number, rules: PricingRule[]): number {
+  if (!rules || rules.length === 0) return parseFloat((costPrice * 2).toFixed(2));
+  
+  // Find matching rule
+  const activeRules = rules.filter(r => r.isActive && (r.source === 'aliexpress' || r.source === 'all'));
+  activeRules.sort((a, b) => a.priority - b.priority);
+  
+  let rule = activeRules.find(r => {
+    if (r.minPrice !== null && costPrice < r.minPrice) return false;
+    if (r.maxPrice !== null && costPrice > r.maxPrice) return false;
+    return true;
+  });
+  
+  if (!rule) return parseFloat((costPrice * 2).toFixed(2));
+  
+  let price = costPrice;
+  if (rule.lowPriceThreshold && rule.lowPriceFlatAdd && price <= rule.lowPriceThreshold) {
+    price += rule.lowPriceFlatAdd;
+  }
+  if (rule.ruleType === 'percentage') {
+    price = price * (1 + rule.markupValue / 100);
+  } else if (rule.ruleType === 'multiplier') {
+    price = price * rule.markupValue;
+  } else if (rule.ruleType === 'flat') {
+    price = price + rule.markupValue;
+  }
+  price += rule.flatMarkup || 0;
+  if (rule.roundTo99) {
+    price = Math.ceil(price) - 0.01;
+  }
+  return parseFloat(price.toFixed(2));
+}
+
 interface SearchMeta {
   totalCount: number;
   pageIndex: number;
@@ -75,7 +163,7 @@ const SORT_OPTIONS = [
 
 const PAGE_SIZE_OPTIONS = [20, 40, 60];
 
-function parseProducts(raw: unknown): ParsedProduct[] {
+function parseProducts(raw: unknown, rules: PricingRule[] = []): ParsedProduct[] {
   if (!raw || typeof raw !== 'object') return [];
   const resp = raw as Record<string, unknown>;
 
@@ -120,7 +208,7 @@ function parseProducts(raw: unknown): ParsedProduct[] {
     const category = p.cateId ?? p.first_level_category_name ?? 'General';
     const shippingCost = parseFloat(p.freightAmount ?? '0') || 0;
     const hasFreeShipping = shippingCost === 0;
-    const suggestedSellPrice = parseFloat((salePrice * 2).toFixed(2));
+    const suggestedSellPrice = calculateSuggestedPrice(salePrice + shippingCost, rules);
     const marginEstimate = suggestedSellPrice > 0
       ? parseFloat(((suggestedSellPrice - salePrice - shippingCost) / suggestedSellPrice * 100).toFixed(1))
       : 0;
@@ -288,10 +376,27 @@ export default function ProductDiscoveryPage() {
   const [debugInfo, setDebugInfo] = useState<Record<string, unknown> | null>(null);
   const [showDebug, setShowDebug] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<ParsedProduct | null>(null);
+  const [activeTab, setActiveTab] = useState<'search' | 'browse'>('search');
   // Batch select
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchAdding, setBatchAdding] = useState(false);
   const [batchAddedCount, setBatchAddedCount] = useState(0);
+  const [pricingRules, setPricingRules] = useState<PricingRule[]>([]);
+  
+  React.useEffect(() => {
+    if (user) {
+      const supabase = createClient();
+      supabase.from('pricing_rules')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('priority', { ascending: true })
+        .then(({ data }) => {
+          if (data) {
+            setPricingRules(data.map(mapDbRule));
+          }
+        });
+    }
+  }, [user]);
   // Feed-based browsing (no keywords — category browse or global bestsellers) paginates via a
   // short-lived search_id cursor rather than page numbers. Track page number -> cursor needed
   // to fetch that page. Cleared whenever a fresh (page 1) search starts.
@@ -312,6 +417,7 @@ export default function ProductDiscoveryPage() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          mode: activeTab,
           keywords: keywords.trim() || undefined,
           categoryId: selectedCategory || undefined,
           minPrice: minPrice || undefined,
@@ -348,7 +454,7 @@ export default function ProductDiscoveryPage() {
 
       let parsed: ParsedProduct[];
       if (json.products && Array.isArray(json.products) && json.products.length > 0) {
-        parsed = parseProducts({ products: json.products });
+        parsed = parseProducts({ products: json.products }, pricingRules);
       } else {
         const rawResp = json.rawResponse as Record<string, unknown> | undefined;
         const wrapper = rawResp?.['aliexpress_ds_text_search_response'] as Record<string, unknown> | undefined;
@@ -356,9 +462,9 @@ export default function ProductDiscoveryPage() {
         const wProds = wData?.['products'] as Record<string, unknown> | undefined;
         const selectionProds = wProds?.['selection_search_product'];
         if (Array.isArray(selectionProds) && selectionProds.length > 0) {
-          parsed = parseProducts({ products: selectionProds });
+          parsed = parseProducts({ products: selectionProds }, pricingRules);
         } else {
-          parsed = parseProducts(json.rawResponse ?? json.data);
+          parsed = parseProducts(json.rawResponse ?? json.data, pricingRules);
         }
       }
 
@@ -396,7 +502,7 @@ export default function ProductDiscoveryPage() {
     } finally {
       setLoading(false);
     }
-  }, [keywords, minPrice, maxPrice, minRating, sortBy, pageSize, selectedCategory]);
+  }, [activeTab, keywords, minPrice, maxPrice, minRating, sortBy, pageSize, selectedCategory]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -441,7 +547,7 @@ export default function ProductDiscoveryPage() {
           products_count: 1,
           created_at: new Date().toISOString(),
           completed_at: new Date().toISOString(),
-        }).then(() => {}).catch(() => {});
+        }).then(undefined, () => {});
         return true;
       } else {
         // If upsert fails (e.g. no unique constraint), try plain insert
@@ -476,7 +582,7 @@ export default function ProductDiscoveryPage() {
           products_count: 1,
           created_at: new Date().toISOString(),
           completed_at: new Date().toISOString(),
-        }).then(() => {}).catch(() => {});
+        }).then(undefined, () => {});
         return true;
       }
     } catch {
@@ -529,58 +635,131 @@ export default function ProductDiscoveryPage() {
       subtitle="Search AliExpress live · Browse categories · Batch import to review queue"
     >
       <div className="space-y-5">
-        {/* Search Bar */}
-        <form onSubmit={handleSearch}>
-          <div className="flex gap-3">
-            <div className="flex-1 relative">
-              <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--muted-foreground)' }} />
-              <input
-                type="text"
-                value={keywords}
-                onChange={e => setKeywords(e.target.value)}
-                placeholder="Search AliExpress products… e.g. wireless earbuds, phone case"
-                className="w-full pl-10 pr-4 py-2.5 rounded-xl text-sm outline-none"
-                style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', color: 'var(--foreground)' }}
-              />
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowFilters(v => !v)}
-              className="px-3.5 py-2.5 rounded-xl text-sm font-medium flex items-center gap-2 transition-colors"
-              style={{
-                backgroundColor: showFilters ? 'rgba(99,102,241,0.15)' : 'var(--card)',
-                border: `1px solid ${showFilters ? 'rgba(99,102,241,0.4)' : 'var(--border)'}`,
-                color: showFilters ? '#818cf8' : 'var(--foreground)',
-              }}
-            >
-              <SlidersHorizontal size={15} />
-              Filters
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 disabled:opacity-50 transition-opacity"
-              style={{ background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)', color: '#fff' }}
-            >
-              {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
-              {keywords.trim() ? 'Search' : 'Browse'}
-            </button>
-          </div>
+        {/* Tabs */}
+        <div className="flex gap-6 border-b" style={{ borderColor: 'var(--border)' }}>
+          <button
+            onClick={() => setActiveTab('search')}
+            className={`pb-3 text-sm font-semibold transition-colors border-b-2 ${
+              activeTab === 'search'
+                ? 'border-[#818cf8] text-[#818cf8]'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+            style={{ color: activeTab !== 'search' ? 'var(--muted-foreground)' : undefined }}
+          >
+            Search by Keyword
+          </button>
+          <button
+            onClick={() => setActiveTab('browse')}
+            className={`pb-3 text-sm font-semibold transition-colors border-b-2 ${
+              activeTab === 'browse'
+                ? 'border-[#818cf8] text-[#818cf8]'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+            style={{ color: activeTab !== 'browse' ? 'var(--muted-foreground)' : undefined }}
+          >
+            Browse by Category
+          </button>
+        </div>
 
-          {/* Category + Sort + Page Size row */}
-          <div className="mt-3 flex flex-wrap gap-3 items-center">
-            <div className="flex items-center gap-2">
-              <ListFilter size={14} style={{ color: 'var(--muted-foreground)' }} />
-              <select
-                value={selectedCategory}
-                onChange={e => setSelectedCategory(e.target.value)}
-                className="input-base h-8 text-xs"
+        {/* Form */}
+        <form onSubmit={handleSearch}>
+          {activeTab === 'search' ? (
+            <div className="flex gap-3">
+              <div className="flex-1 relative">
+                <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--muted-foreground)' }} />
+                <input
+                  type="text"
+                  value={keywords}
+                  onChange={e => setKeywords(e.target.value)}
+                  placeholder="Search AliExpress products… e.g. wireless earbuds, phone case"
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl text-sm outline-none"
+                  style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', color: 'var(--foreground)' }}
+                  required
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowFilters(v => !v)}
+                className="px-3.5 py-2.5 rounded-xl text-sm font-medium flex items-center gap-2 transition-colors"
+                style={{
+                  backgroundColor: showFilters ? 'rgba(99,102,241,0.15)' : 'var(--card)',
+                  border: `1px solid ${showFilters ? 'rgba(99,102,241,0.4)' : 'var(--border)'}`,
+                  color: showFilters ? '#818cf8' : 'var(--foreground)',
+                }}
               >
-                {ALI_CATEGORIES.map(c => (
-                  <option key={c.id} value={c.id}>{c.label}</option>
-                ))}
-              </select>
+                <SlidersHorizontal size={15} />
+                Filters
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className="px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 disabled:opacity-50 transition-opacity"
+                style={{ background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)', color: '#fff' }}
+              >
+                {loading ? <Loader2 size={15} className="animate-spin" /> : <Search size={15} />}
+                Search
+              </button>
             </div>
+          ) : (
+            <div className="flex gap-3">
+              <div className="flex-1 relative flex items-center">
+                <ListFilter size={16} className="absolute left-3.5" style={{ color: 'var(--muted-foreground)' }} />
+                <select
+                  value={selectedCategory}
+                  onChange={e => setSelectedCategory(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2.5 rounded-xl text-sm outline-none appearance-none"
+                  style={{ backgroundColor: 'var(--card)', border: '1px solid var(--border)', color: 'var(--foreground)' }}
+                  required
+                >
+                  <option value="" disabled>Select a category to browse...</option>
+                  {ALI_CATEGORIES.map(c => (
+                    <option key={c.id} value={c.id}>{c.label}</option>
+                  ))}
+                </select>
+                <ChevronDown size={14} className="absolute right-4" style={{ color: 'var(--muted-foreground)' }} />
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowFilters(v => !v)}
+                className="px-3.5 py-2.5 rounded-xl text-sm font-medium flex items-center gap-2 transition-colors"
+                style={{
+                  backgroundColor: showFilters ? 'rgba(99,102,241,0.15)' : 'var(--card)',
+                  border: `1px solid ${showFilters ? 'rgba(99,102,241,0.4)' : 'var(--border)'}`,
+                  color: showFilters ? '#818cf8' : 'var(--foreground)',
+                }}
+              >
+                <SlidersHorizontal size={15} />
+                Filters
+              </button>
+              <button
+                type="submit"
+                disabled={loading}
+                className="px-5 py-2.5 rounded-xl text-sm font-semibold flex items-center gap-2 disabled:opacity-50 transition-opacity"
+                style={{ background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)', color: '#fff' }}
+              >
+                {loading ? <Loader2 size={15} className="animate-spin" /> : <ListFilter size={15} />}
+                Browse
+              </button>
+            </div>
+          )}
+
+          {/* Sort + Page Size row */}
+          <div className="mt-3 flex flex-wrap gap-3 items-center">
+            {activeTab === 'search' && (
+              <div className="flex items-center gap-2">
+                <ListFilter size={14} style={{ color: 'var(--muted-foreground)' }} />
+                <select
+                  value={selectedCategory}
+                  onChange={e => setSelectedCategory(e.target.value)}
+                  className="input-base h-8 text-xs"
+                >
+                  <option value="">All Categories</option>
+                  {ALI_CATEGORIES.map(c => (
+                    <option key={c.id} value={c.id}>{c.label}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <ArrowUpDown size={14} style={{ color: 'var(--muted-foreground)' }} />
               <select
@@ -683,7 +862,7 @@ export default function ProductDiscoveryPage() {
                   </span>
                   <span className="px-2 py-1 rounded font-mono" style={{ backgroundColor: 'rgba(245,158,11,0.1)', color: '#f59e0b' }}>products: {String(debugInfo.productsCount ?? 0)}</span>
                 </div>
-                {debugInfo.errorMsg && (
+                {!!debugInfo.errorMsg && (
                   <div className="p-3 rounded-lg" style={{ backgroundColor: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)' }}>
                     <p className="text-xs font-mono" style={{ color: '#ef4444' }}>{String(debugInfo.errorMsg)}</p>
                   </div>
@@ -726,33 +905,57 @@ export default function ProductDiscoveryPage() {
         {/* Initial state */}
         {!loading && !searched && (
           <div className="flex flex-col items-center justify-center py-20 text-center">
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4" style={{ background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.2)' }}>
-              <Search size={28} style={{ color: '#818cf8' }} />
-            </div>
-            <p className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Browse or Search AliExpress Products</p>
-            <p className="text-sm mt-1 max-w-md" style={{ color: 'var(--muted-foreground)' }}>
-              Pick a category and sort order to browse best sellers — no keywords needed. Or type keywords to search for specific products.
-            </p>
-            <div className="mt-4 flex flex-wrap gap-2 justify-center">
-              {[
-                { id: '44', label: '🔌 Consumer Electronics' },
-                { id: '509', label: '📱 Phones' },
-                { id: '15', label: '🏠 Home & Garden' },
-                { id: '26', label: '🎮 Toys & Hobbies' },
-                { id: '18', label: '⚽ Sports' },
-                { id: '66', label: '💄 Health & Beauty' },
-              ].map(cat => (
-                <button
-                  key={cat.id}
-                  type="button"
-                  onClick={() => { setSelectedCategory(cat.id); setSortBy('orders,desc'); setTimeout(() => doSearch(1), 0); }}
-                  className="px-3 py-1.5 rounded-full text-xs font-medium transition-colors"
-                  style={{ background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.25)', color: '#818cf8' }}
-                >
-                  {cat.label}
-                </button>
-              ))}
-            </div>
+            {activeTab === 'search' ? (
+              <>
+                <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4" style={{ background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.2)' }}>
+                  <Search size={28} style={{ color: '#818cf8' }} />
+                </div>
+                <p className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Search AliExpress Products</p>
+                <p className="text-sm mt-1 max-w-md" style={{ color: 'var(--muted-foreground)' }}>
+                  Type keywords to search for specific products across AliExpress.
+                </p>
+              </>
+            ) : (
+              <>
+                <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4" style={{ background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.2)' }}>
+                  <ListFilter size={28} style={{ color: '#818cf8' }} />
+                </div>
+                <p className="text-base font-semibold" style={{ color: 'var(--foreground)' }}>Browse AliExpress Categories</p>
+                <p className="text-sm mt-1 max-w-md" style={{ color: 'var(--muted-foreground)' }}>
+                  Pick a category below to instantly browse the top-selling products in that category.
+                </p>
+                <div className="mt-6 flex flex-wrap gap-2 justify-center max-w-3xl">
+                  {[
+                    { id: '44', label: '🔌 Consumer Electronics' },
+                    { id: '509', label: '📱 Phones & Telecom' },
+                    { id: '15', label: '🏠 Home & Garden' },
+                    { id: '26', label: '🎮 Toys & Hobbies' },
+                    { id: '18', label: '⚽ Sports & Entertainment' },
+                    { id: '66', label: '💄 Beauty & Health' },
+                    { id: '1501', label: '👶 Mother & Kids' },
+                    { id: '34', label: '🚗 Automobiles' },
+                    { id: '1524', label: '🧳 Luggage & Bags' },
+                    { id: '322', label: '👞 Shoes' },
+                    { id: '1503', label: '💍 Jewelry' },
+                    { id: '21', label: '📓 Education & Office' },
+                  ].map(cat => (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedCategory(cat.id);
+                        setSortBy('orders,desc');
+                        setTimeout(() => doSearch(1), 0);
+                      }}
+                      className="px-4 py-2 rounded-full text-xs font-semibold transition-all hover:scale-105"
+                      style={{ background: 'rgba(99,102,241,0.1)', border: '1px solid rgba(99,102,241,0.25)', color: '#818cf8' }}
+                    >
+                      {cat.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         )}
 
