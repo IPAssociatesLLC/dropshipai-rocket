@@ -242,11 +242,14 @@ export async function POST(request: NextRequest) {
     const finalProducts = allNormalized.slice(0, pageSize);
 
     // Fetch shipping costs for the final products before returning
+    let freightDebugExample = null;
     const finalProductsWithFreight = await runWithConcurrencyLimit(finalProducts, 5, async (prod: any) => {
       try {
-        const fRes = await callAliDsApi('aliexpress.ds.freight.query', searchCreds, { product_id: prod.itemId, product_num: '1', send_goods_country_code: 'CN', ship_to_country: 'US', price_currency: 'USD' }).catch(() => null);
+        const fRes = await callAliDsApi('aliexpress.ds.freight.query', searchCreds, { product_id: prod.itemId, product_num: '1', send_goods_country_code: 'CN', ship_to_country: 'US', price_currency: 'USD' }).catch((err) => err);
+        if (!freightDebugExample) freightDebugExample = { request: prod.itemId, response: fRes };
+        
         let shippingFee = '0';
-        if (fRes && fRes.success && fRes.data) {
+        if (fRes && (fRes.success || fRes.result?.success) && fRes.data) {
           const data = fRes.data as any;
           // Robustly find the shipping options array regardless of exact API key name
           const opts = data.aeop_freight_calculate_result_for_buyer_dtolist 
@@ -272,6 +275,8 @@ export async function POST(request: NextRequest) {
         return { ...prod, freightAmount: '0' };
       }
     });
+
+    (debugInfo as any).freightDebugExample = freightDebugExample;
 
     const searchLabel = hasKeywords
       ? `"${keywords.trim()}"${hasCategoryId ? ` in category ${categoryId}` : ''}`
