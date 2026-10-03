@@ -141,7 +141,7 @@ export async function POST(request: NextRequest) {
       LOG(`[Browse Mode] Fetching hot-search feed items for category ${categoryId || 'ALL'}`);
       
       const feedResult = await dsFeedItemIdsGet(searchCreds, 'hot-search', {
-        category_id: undefined, // Pull global winning products without filtering by category
+        category_id: categoryId,
         page_size: pageSize,
         search_id: undefined,
       });
@@ -187,14 +187,22 @@ export async function POST(request: NextRequest) {
           if (!item || !item.detail) continue;
           const { detail, shippingFee } = item;
           // Product detail has slightly different structure, normalize it
-          const baseInfo = (detail as any)?.ae_item_base_info_dto || detail;
-          const skuInfoList = (detail as any)?.ae_item_sku_info_dtos || [];
+          const actualDetail = (detail as any)?.result || detail;
+          const baseInfo = actualDetail?.ae_item_base_info_dto || actualDetail;
+          
+          // Handle nested arrays from AliExpress API (sometimes wrapped in the plural key)
+          let skuInfoList = actualDetail?.ae_item_sku_info_dtos;
+          if (skuInfoList && !Array.isArray(skuInfoList) && skuInfoList.ae_item_sku_info_dto) {
+            skuInfoList = skuInfoList.ae_item_sku_info_dto;
+          }
+          if (!Array.isArray(skuInfoList)) skuInfoList = [];
+          
           const defaultSku = skuInfoList[0] || {};
           
           const mappedProd = {
             product_id: baseInfo.product_id,
             product_title: baseInfo.subject,
-            product_main_image_url: ((detail as any)?.ae_multimedia_info_dto?.image_urls?.split(';')?.[0]) || '',
+            product_main_image_url: (actualDetail?.ae_multimedia_info_dto?.image_urls?.split(';')?.[0]) || '',
             target_sale_price: defaultSku.offer_sale_price || '0',
             target_original_price: defaultSku.sku_price || '0',
             discount: defaultSku.wholesale_price_tiers?.[0]?.discount || '0%',
@@ -285,14 +293,21 @@ export async function POST(request: NextRequest) {
         for (const item of detailedProducts) {
           if (!item || !item.detail) continue;
           const { detail, shippingFee } = item;
-          const baseInfo = (detail as any)?.ae_item_base_info_dto || detail;
-          const skuInfoList = (detail as any)?.ae_item_sku_info_dtos || [];
+          const actualDetail = (detail as any)?.result || detail;
+          const baseInfo = actualDetail?.ae_item_base_info_dto || actualDetail;
+          
+          let skuInfoList = actualDetail?.ae_item_sku_info_dtos;
+          if (skuInfoList && !Array.isArray(skuInfoList) && skuInfoList.ae_item_sku_info_dto) {
+            skuInfoList = skuInfoList.ae_item_sku_info_dto;
+          }
+          if (!Array.isArray(skuInfoList)) skuInfoList = [];
+          
           const defaultSku = skuInfoList[0] || {};
           
           const mappedProd = {
             product_id: baseInfo.product_id,
             product_title: baseInfo.subject,
-            product_main_image_url: ((detail as any)?.ae_multimedia_info_dto?.image_urls?.split(';')?.[0]) || '',
+            product_main_image_url: (actualDetail?.ae_multimedia_info_dto?.image_urls?.split(';')?.[0]) || '',
             target_sale_price: defaultSku.offer_sale_price || '0',
             target_original_price: defaultSku.sku_price || '0',
             discount: defaultSku.wholesale_price_tiers?.[0]?.discount || '0%',
