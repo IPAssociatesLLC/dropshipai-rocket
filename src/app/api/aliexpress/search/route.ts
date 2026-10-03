@@ -305,7 +305,7 @@ export async function POST(request: NextRequest) {
       totalCount: Number(totalCount),
       pageIndex: pageNo,
       pageSize,
-      rawResponse,
+      rawResponse: freightDebugExample,
       debugInfo,
     });
   } catch (err: unknown) {
