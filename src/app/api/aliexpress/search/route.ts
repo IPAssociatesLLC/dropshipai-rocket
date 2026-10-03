@@ -246,10 +246,25 @@ export async function POST(request: NextRequest) {
       try {
         const fRes = await callAliDsApi('aliexpress.ds.freight.query', searchCreds, { product_id: prod.itemId, product_num: '1', send_goods_country_code: 'CN', ship_to_country: 'US', price_currency: 'USD' }).catch(() => null);
         let shippingFee = '0';
-        if (fRes && fRes.success) {
-          const opts = (fRes.data as any)?.aeop_freight_calculate_result_for_buyer_dtolist;
-          if (opts && opts.length > 0) {
-            shippingFee = String(opts[0].freight?.amount || opts[0].freight?.cent || '0');
+        if (fRes && fRes.success && fRes.data) {
+          const data = fRes.data as any;
+          // Robustly find the shipping options array regardless of exact API key name
+          const opts = data.aeop_freight_calculate_result_for_buyer_dtolist 
+            || data.freight_list 
+            || data.shipping_methods 
+            || data.delivery_options 
+            || (Array.isArray(data) ? data : null)
+            || Object.values(data).find(v => Array.isArray(v));
+            
+          if (opts && Array.isArray(opts) && opts.length > 0) {
+            const first = opts[0];
+            shippingFee = String(
+               first.freight?.amount || 
+               first.freight?.cent || 
+               first.shipping_fee ||
+               first.amount ||
+               first.estimated_freight || '0'
+            );
           }
         }
         return { ...prod, freightAmount: shippingFee };
